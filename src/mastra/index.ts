@@ -2,15 +2,19 @@
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
 import { LibSQLStore } from '@mastra/libsql';
-import { Observability, DefaultExporter, CloudExporter, SensitiveDataFilter } from '@mastra/observability';
-import { weatherWorkflow } from './workflows/weather-workflow';
-import { researchAnalysisWorkflow } from './workflows/research-workflow';
+import { Observability, DefaultExporter, SensitiveDataFilter } from '@mastra/observability';
 import { cognitiveResearchWorkflow } from './workflows/cognitive-research-workflow';
 import { researchAgent } from './agents/research-agent';
+import { initDb, seedIfEmpty } from './storage/index';
 
+// Initialize research database (creates tables, seeds default ontology)
+const dbReady = initDb().then(() => seedIfEmpty());
+dbReady.catch(err => console.error('Failed to initialize research database:', err));
+
+export { dbReady };
 
 export const mastra = new Mastra({
-  workflows: { weatherWorkflow, researchAnalysisWorkflow, cognitiveResearchWorkflow },
+  workflows: { cognitiveResearchWorkflow },
   agents: { researchAgent },
   storage: new LibSQLStore({
     id: "mastra-storage",
@@ -26,8 +30,7 @@ export const mastra = new Mastra({
       default: {
         serviceName: 'mastra',
         exporters: [
-          new DefaultExporter(), // Persists traces to storage for Mastra Studio
-          new CloudExporter(), // Sends traces to Mastra Cloud (if MASTRA_CLOUD_ACCESS_TOKEN is set)
+          new DefaultExporter(), // Persists traces to local storage for Mastra Studio
         ],
         spanOutputProcessors: [
           new SensitiveDataFilter(), // Redacts sensitive data like passwords, tokens, keys

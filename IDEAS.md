@@ -12,7 +12,7 @@ Future enhancements for the cognitive research agent system.
 ## Analysis Lenses
 
 - **Sentiment lens** - track emotional tone per persona, per topic, over time
-- **Quote bank** - auto-extract and tag quotable moments with persona/topic/sentiment
+- ~~**Quote bank** - auto-extract and tag quotable moments with persona/topic/sentiment~~ ✅ Implemented
 - **Terminology extractor** - build glossary of how each persona talks vs. system terminology
 - **Pain point severity scorer** - frequency × impact matrix from evidence
 - **Competitive lens** - compare existing tools to PoC feature-by-feature
@@ -20,16 +20,16 @@ Future enhancements for the cognitive research agent system.
 ## Ontology Evolution
 
 - **Confidence decay** - insights weaken over time without fresh evidence
-- **Evidence chain tracking** - every insight links to source transcripts + quotes
+- ~~**Evidence chain tracking** - every insight links to source transcripts + quotes~~ ✅ Implemented
 - **Auto conflict detection** - flag when new data contradicts existing ontology
-- **Ontology versioning** - snapshot state before/after each analysis, track evolution
+- ~~**Ontology versioning** - snapshot state before/after each analysis, track evolution~~ ✅ Implemented
 - **Merge tool** - reconcile insights when two researchers analyze same persona
 
 ## Artifact Generation
 
 Priority area - stakeholder alignment requires polished outputs.
 
-- **Persona profile generator** - auto-generate "Day in the life of a GOM" doc
+- ~~**Persona profile generator** - auto-generate "Day in the life of a GOM" doc~~ ✅ Implemented
 - **PoC pitch deck generator** - per-persona value prop with evidence
 - **Stakeholder digest workflow** - weekly summary of new insights, tensions, questions
 - **Feature prioritization matrix** - score PoC features by pain points solved × personas affected

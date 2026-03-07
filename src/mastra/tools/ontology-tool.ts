@@ -1,6 +1,19 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { Persona, type PersonaType, PERSONA_LABELS } from './transcript-tool';
+import {
+  getAllEntities, getEntity, upsertEntity,
+  getAllTensions, upsertTension,
+  getOpenQuestions, removeOpenQuestion,
+  getTerminology, upsertTerm,
+  getAllTools, getTool, upsertTool,
+  getAllPocFeatures, upsertPocFeature,
+  getDomain, getLastUpdated, getFullOntology,
+  updateEntityPerspective,
+  getEvidenceForTarget, getEvidenceByTranscript,
+  takeSnapshot, getSnapshot, listSnapshots, getLatestSnapshot,
+  type EntityRow, type TensionRow, type ToolRow, type PocFeatureRow, type RolePerspective, type ToolUsage,
+} from '../storage/index.js';
 
 const RolePerspectiveSchema = z.object({
   primaryConcern: z.string().describe('What this role cares most about regarding this entity'),
@@ -89,47 +102,6 @@ const OntologySchema = z.object({
   lastUpdated: z.string(),
 });
 
-type Ontology = z.infer<typeof OntologySchema>;
-
-let currentOntology: Ontology = {
-  domain: 'grain-origination',
-  entities: [
-    { id: 'producer', name: 'Producer', type: 'actor', attributes: { role: 'sells grain' } },
-    { id: 'elevator', name: 'Elevator', type: 'actor', attributes: { role: 'buys/stores grain' } },
-    {
-      id: 'contract',
-      name: 'Contract',
-      type: 'object',
-      attributes: { purpose: 'pricing agreement' },
-      perspectives: {
-        merchant: { primaryConcern: 'position exposure and hedge timing' },
-        grain_origination_merchant: { primaryConcern: 'volume secured and relationship health' },
-        csr: { primaryConcern: 'producer satisfaction and issue resolution' },
-        strategic_account_rep: { primaryConcern: 'account health and long-term value' },
-      },
-    },
-    { id: 'basis', name: 'Basis', type: 'concept', attributes: { definition: 'local price adjustment' } },
-    { id: 'futures', name: 'Futures Price', type: 'concept', attributes: { definition: 'commodity exchange price' } },
-  ],
-  tools: [],
-  pocFeatures: [],
-  tensions: [],
-  openQuestions: [
-    'How do different roles prioritize contract information?',
-    'Where do mental models diverge between Merchant and CSR?',
-    'What terminology differences cause miscommunication?',
-    'Which existing tools create the most friction for each persona?',
-    'What tool workflows could be consolidated?',
-  ],
-  terminology: {
-    'basis': 'The difference between local cash price and futures price',
-    'hedge': 'Offsetting price risk through futures contracts',
-    'cash sale': 'Immediate delivery and payment',
-    'forward contract': 'Agreement to deliver at future date for set price',
-  },
-  lastUpdated: new Date().toISOString(),
-};
-
 export const getOntologyTool = createTool({
   id: 'get-ontology',
   description: 'Retrieve the current domain ontology - all known entities, relationships, tensions, and open questions about grain pricing',
@@ -138,11 +110,12 @@ export const getOntologyTool = createTool({
   }),
   outputSchema: OntologySchema.partial(),
   execute: async ({ section = 'all' }) => {
-    if (section === 'all') return currentOntology;
-    if (section === 'entities') return { domain: currentOntology.domain, entities: currentOntology.entities, lastUpdated: currentOntology.lastUpdated };
-    if (section === 'tensions') return { domain: currentOntology.domain, tensions: currentOntology.tensions, lastUpdated: currentOntology.lastUpdated };
-    if (section === 'questions') return { domain: currentOntology.domain, openQuestions: currentOntology.openQuestions, lastUpdated: currentOntology.lastUpdated };
-    return { domain: currentOntology.domain, terminology: currentOntology.terminology, lastUpdated: currentOntology.lastUpdated };
+    const ontology = await getFullOntology();
+    if (section === 'all') return ontology;
+    if (section === 'entities') return { domain: ontology.domain, entities: ontology.entities, lastUpdated: ontology.lastUpdated };
+    if (section === 'tensions') return { domain: ontology.domain, tensions: ontology.tensions, lastUpdated: ontology.lastUpdated };
+    if (section === 'questions') return { domain: ontology.domain, openQuestions: ontology.openQuestions, lastUpdated: ontology.lastUpdated };
+    return { domain: ontology.domain, terminology: ontology.terminology, lastUpdated: ontology.lastUpdated };
   },
 });
 
@@ -157,14 +130,9 @@ export const addEntityTool = createTool({
     entityCount: z.number(),
   }),
   execute: async ({ entity }) => {
-    const exists = currentOntology.entities.find(e => e.id === entity.id);
-    if (exists) {
-      Object.assign(exists, entity);
-    } else {
-      currentOntology.entities.push(entity);
-    }
-    currentOntology.lastUpdated = new Date().toISOString();
-    return { success: true, entityCount: currentOntology.entities.length };
+    await upsertEntity(entity as EntityRow);
+    const entities = await getAllEntities();
+    return { success: true, entityCount: entities.length };
   },
 });
 
@@ -179,15 +147,9 @@ export const addTensionTool = createTool({
     tensionCount: z.number(),
   }),
   execute: async ({ tension }) => {
-    currentOntology.tensions = currentOntology.tensions || [];
-    const exists = currentOntology.tensions.find(t => t.id === tension.id);
-    if (exists) {
-      Object.assign(exists, tension);
-    } else {
-      currentOntology.tensions.push(tension);
-    }
-    currentOntology.lastUpdated = new Date().toISOString();
-    return { success: true, tensionCount: currentOntology.tensions.length };
+    await upsertTension(tension as TensionRow);
+    const tensions = await getAllTensions();
+    return { success: true, tensionCount: tensions.length };
   },
 });
 
@@ -205,13 +167,12 @@ export const resolveQuestionTool = createTool({
     remainingQuestions: z.number(),
   }),
   execute: async ({ question, resolution, addToTerminology, termKey }) => {
-    currentOntology.openQuestions = currentOntology.openQuestions?.filter(q => q !== question) || [];
+    await removeOpenQuestion(question);
     if (addToTerminology && termKey) {
-      currentOntology.terminology = currentOntology.terminology || {};
-      currentOntology.terminology[termKey] = resolution;
+      await upsertTerm(termKey, resolution);
     }
-    currentOntology.lastUpdated = new Date().toISOString();
-    return { success: true, remainingQuestions: currentOntology.openQuestions.length };
+    const remaining = await getOpenQuestions();
+    return { success: true, remainingQuestions: remaining.length };
   },
 });
 
@@ -231,23 +192,37 @@ export const queryRelationshipsTool = createTool({
     })),
   }),
   execute: async ({ entityId, depth = 1 }) => {
-    const entity = currentOntology.entities.find(e => e.id === entityId);
-    const related: Array<{ entity: z.infer<typeof EntitySchema>; relation: string; direction: 'outgoing' | 'incoming' }> = [];
+    const entities = await getAllEntities();
+    const entity = entities.find(e => e.id === entityId);
+    const related: Array<{ entity: EntityRow; relation: string; direction: 'outgoing' | 'incoming' }> = [];
 
-    if (entity?.relationships) {
-      for (const rel of entity.relationships) {
-        const target = currentOntology.entities.find(e => e.id === rel.targetId);
-        if (target) {
-          related.push({ entity: target, relation: rel.relation, direction: 'outgoing' });
+    const visited = new Set<string>([entityId]);
+    const queue: Array<{ id: string; currentDepth: number }> = [{ id: entityId, currentDepth: 0 }];
+
+    while (queue.length > 0) {
+      const { id, currentDepth } = queue.shift()!;
+      if (currentDepth >= depth) continue;
+
+      const current = entities.find(e => e.id === id);
+      if (current?.relationships) {
+        for (const rel of current.relationships) {
+          const target = entities.find(e => e.id === rel.targetId);
+          if (target && !visited.has(target.id)) {
+            visited.add(target.id);
+            related.push({ entity: target, relation: rel.relation, direction: 'outgoing' });
+            queue.push({ id: target.id, currentDepth: currentDepth + 1 });
+          }
         }
       }
-    }
 
-    for (const e of currentOntology.entities) {
-      if (e.relationships) {
-        for (const rel of e.relationships) {
-          if (rel.targetId === entityId) {
-            related.push({ entity: e, relation: rel.relation, direction: 'incoming' });
+      for (const e of entities) {
+        if (e.relationships && !visited.has(e.id)) {
+          for (const rel of e.relationships) {
+            if (rel.targetId === id) {
+              visited.add(e.id);
+              related.push({ entity: e, relation: rel.relation, direction: 'incoming' });
+              queue.push({ id: e.id, currentDepth: currentDepth + 1 });
+            }
           }
         }
       }
@@ -271,16 +246,8 @@ export const addRolePerspectiveTool = createTool({
     rolesWithPerspectives: z.array(z.string()),
   }),
   execute: async ({ entityId, role, perspective }) => {
-    const entity = currentOntology.entities.find(e => e.id === entityId);
-    if (!entity) {
-      throw new Error(`Entity ${entityId} not found`);
-    }
-
-    entity.perspectives = entity.perspectives || {} as Record<PersonaType, z.infer<typeof RolePerspectiveSchema>>;
-    entity.perspectives[role] = perspective;
-    currentOntology.lastUpdated = new Date().toISOString();
-
-    const rolesWithPerspectives = Object.keys(entity.perspectives);
+    const entity = await updateEntityPerspective(entityId, role, perspective);
+    const rolesWithPerspectives = Object.keys(entity.perspectives || {});
     return { success: true, entity, rolesWithPerspectives };
   },
 });
@@ -310,17 +277,20 @@ export const queryByRoleTool = createTool({
     }),
   }),
   execute: async ({ role, includeShared = true }) => {
-    const entities = currentOntology.entities
+    const allEntities = await getAllEntities();
+    const allTensions = await getAllTensions();
+
+    const entities = allEntities
       .filter(e => includeShared || e.perspectives?.[role])
       .map(e => ({
         id: e.id,
         name: e.name,
         type: e.type,
-        perspective: e.perspectives?.[role],
+        perspective: e.perspectives?.[role] as z.infer<typeof RolePerspectiveSchema> | undefined,
         hasRolePerspective: !!e.perspectives?.[role],
       }));
 
-    const tensions = (currentOntology.tensions || []).filter(t => t.roles.includes(role));
+    const tensions = allTensions.filter(t => t.roles.includes(role));
 
     const tensionCount = {
       intraRole: tensions.filter(t => t.tensionType === 'intra-role').length,
@@ -340,7 +310,7 @@ export const queryByRoleTool = createTool({
 
 export const compareRolePerspectivesTool = createTool({
   id: 'compare-role-perspectives',
-  description: 'Compare how two roles view the same entity. Useful for finding inter-role tensions and terminology gaps.',
+  description: 'Compare how two roles perceive the same entity. Useful for finding inter-role tensions.',
   inputSchema: z.object({
     entityId: z.string(),
     roleA: Persona,
@@ -362,13 +332,11 @@ export const compareRolePerspectivesTool = createTool({
     existingTensions: z.array(TensionSchema),
   }),
   execute: async ({ entityId, roleA, roleB }) => {
-    const entity = currentOntology.entities.find(e => e.id === entityId);
-    if (!entity) {
-      throw new Error(`Entity ${entityId} not found`);
-    }
+    const entity = await getEntity(entityId);
+    if (!entity) throw new Error(`Entity ${entityId} not found`);
 
-    const perspA = entity.perspectives?.[roleA];
-    const perspB = entity.perspectives?.[roleB];
+    const perspA = entity.perspectives?.[roleA] as z.infer<typeof RolePerspectiveSchema> | undefined;
+    const perspB = entity.perspectives?.[roleB] as z.infer<typeof RolePerspectiveSchema> | undefined;
 
     const divergenceAreas: string[] = [];
     if (perspA?.primaryConcern !== perspB?.primaryConcern) {
@@ -384,7 +352,8 @@ export const compareRolePerspectivesTool = createTool({
       divergenceAreas.push('workflows');
     }
 
-    const existingTensions = (currentOntology.tensions || []).filter(
+    const allTensions = await getAllTensions();
+    const existingTensions = allTensions.filter(
       t => t.entities.includes(entityId) && t.roles.includes(roleA) && t.roles.includes(roleB)
     );
 
@@ -410,16 +379,10 @@ export const addToolTool = createTool({
     pocToolCount: z.number(),
   }),
   execute: async ({ tool }) => {
-    currentOntology.tools = currentOntology.tools || [];
-    const exists = currentOntology.tools.find(t => t.id === tool.id);
-    if (exists) {
-      Object.assign(exists, tool);
-    } else {
-      currentOntology.tools.push(tool);
-    }
-    currentOntology.lastUpdated = new Date().toISOString();
-    const pocToolCount = currentOntology.tools.filter(t => t.isPoc).length;
-    return { success: true, toolCount: currentOntology.tools.length, pocToolCount };
+    await upsertTool(tool as ToolRow);
+    const tools = await getAllTools();
+    const pocToolCount = tools.filter(t => t.isPoc).length;
+    return { success: true, toolCount: tools.length, pocToolCount };
   },
 });
 
@@ -437,14 +400,12 @@ export const addToolUsageTool = createTool({
     personasTracked: z.array(z.string()),
   }),
   execute: async ({ toolId, persona, usage }) => {
-    currentOntology.tools = currentOntology.tools || [];
-    const tool = currentOntology.tools.find(t => t.id === toolId);
-    if (!tool) {
-      throw new Error(`Tool ${toolId} not found. Add it first with add-tool.`);
-    }
-    tool.usageByPersona = tool.usageByPersona || {};
-    tool.usageByPersona[persona] = usage;
-    currentOntology.lastUpdated = new Date().toISOString();
+    const tool = await getTool(toolId);
+    if (!tool) throw new Error(`Tool ${toolId} not found. Add it first with add-tool.`);
+    const usageByPersona = (tool.usageByPersona || {}) as Record<string, ToolUsage>;
+    usageByPersona[persona] = usage;
+    tool.usageByPersona = usageByPersona;
+    await upsertTool(tool);
     return {
       success: true,
       tool,
@@ -471,13 +432,13 @@ export const getToolsByPersonaTool = createTool({
     mostUsedCategories: z.array(z.string()),
   }),
   execute: async ({ persona, includeUnused = false }) => {
-    currentOntology.tools = currentOntology.tools || [];
+    const allTools = await getAllTools();
 
-    const toolsWithUsage = currentOntology.tools
+    const toolsWithUsage = allTools
       .filter(t => includeUnused || t.usageByPersona?.[persona])
       .map(t => ({
         tool: t,
-        usage: t.usageByPersona?.[persona],
+        usage: t.usageByPersona?.[persona] as z.infer<typeof ToolUsageSchema> | undefined,
       }));
 
     const allPainPoints = toolsWithUsage
@@ -516,20 +477,14 @@ export const addPocFeatureTool = createTool({
     personasCovered: z.array(z.string()),
   }),
   execute: async ({ feature }) => {
-    currentOntology.pocFeatures = currentOntology.pocFeatures || [];
-    const exists = currentOntology.pocFeatures.find(f => f.id === feature.id);
-    if (exists) {
-      Object.assign(exists, feature);
-    } else {
-      currentOntology.pocFeatures.push(feature);
-    }
-    currentOntology.lastUpdated = new Date().toISOString();
+    await upsertPocFeature(feature as PocFeatureRow);
+    const allFeatures = await getAllPocFeatures();
 
     const personasCovered = new Set<string>();
-    currentOntology.pocFeatures.forEach(f => {
+    allFeatures.forEach(f => {
       if (f.benefitsByPersona) {
         Object.entries(f.benefitsByPersona).forEach(([persona, benefit]) => {
-          if (benefit.benefitLevel !== 'none') {
+          if ((benefit as { benefitLevel: string }).benefitLevel !== 'none') {
             personasCovered.add(persona);
           }
         });
@@ -538,7 +493,7 @@ export const addPocFeatureTool = createTool({
 
     return {
       success: true,
-      featureCount: currentOntology.pocFeatures.length,
+      featureCount: allFeatures.length,
       personasCovered: Array.from(personasCovered),
     };
   },
@@ -546,7 +501,7 @@ export const addPocFeatureTool = createTool({
 
 export const getPocBenefitsByPersonaTool = createTool({
   id: 'get-poc-benefits-by-persona',
-  description: 'Get how the PoC tool benefits a specific persona. Shows which features help them and what pain points are solved.',
+  description: 'See how the PoC tool benefits a specific persona. Shows solved pain points and replaced tools.',
   inputSchema: z.object({
     persona: Persona,
   }),
@@ -556,7 +511,7 @@ export const getPocBenefitsByPersonaTool = createTool({
     features: z.array(z.object({
       featureId: z.string(),
       featureName: z.string(),
-      benefitLevel: z.enum(['high', 'medium', 'low', 'none']),
+      benefitLevel: z.string(),
       solvedPainPoints: z.array(z.string()),
       replacesTools: z.array(z.string()),
     })),
@@ -565,17 +520,24 @@ export const getPocBenefitsByPersonaTool = createTool({
     overallBenefitScore: z.enum(['high', 'medium', 'low', 'none']),
   }),
   execute: async ({ persona }) => {
-    currentOntology.pocFeatures = currentOntology.pocFeatures || [];
+    const allFeatures = await getAllPocFeatures();
 
-    const features = currentOntology.pocFeatures
+    const features = allFeatures
       .filter(f => f.benefitsByPersona?.[persona])
-      .map(f => ({
-        featureId: f.id,
-        featureName: f.name,
-        benefitLevel: f.benefitsByPersona![persona].benefitLevel,
-        solvedPainPoints: f.benefitsByPersona![persona].solvedPainPoints,
-        replacesTools: f.benefitsByPersona![persona].replacesTools || [],
-      }));
+      .map(f => {
+        const benefit = f.benefitsByPersona![persona] as {
+          benefitLevel: string;
+          solvedPainPoints: string[];
+          replacesTools?: string[];
+        };
+        return {
+          featureId: f.id,
+          featureName: f.name,
+          benefitLevel: benefit.benefitLevel,
+          solvedPainPoints: benefit.solvedPainPoints || [],
+          replacesTools: benefit.replacesTools || [],
+        };
+      });
 
     const allSolvedPainPoints = new Set(features.flatMap(f => f.solvedPainPoints));
     const allReplacedTools = new Set(features.flatMap(f => f.replacesTools));
@@ -622,15 +584,15 @@ export const compareToolEcosystemTool = createTool({
     consolidationOpportunities: z.array(z.string()),
   }),
   execute: async ({ personas }) => {
-    currentOntology.tools = currentOntology.tools || [];
+    const allTools = await getAllTools();
     const targetPersonas = personas || ['merchant', 'grain_origination_merchant', 'csr', 'strategic_account_rep'];
 
     const toolsByCategory: Record<string, number> = {};
-    currentOntology.tools.forEach(t => {
+    allTools.forEach(t => {
       toolsByCategory[t.category] = (toolsByCategory[t.category] || 0) + 1;
     });
 
-    const sharedTools = currentOntology.tools
+    const sharedTools = allTools
       .filter(t => {
         const usedByCount = targetPersonas.filter(p => t.usageByPersona?.[p]).length;
         return usedByCount > 1;
@@ -643,7 +605,7 @@ export const compareToolEcosystemTool = createTool({
 
     const personaSpecificTools: Record<string, string[]> = {};
     targetPersonas.forEach(p => {
-      const specific = currentOntology.tools!
+      const specific = allTools
         .filter(t => {
           const usedByThisPersona = t.usageByPersona?.[p];
           const usedByOthers = targetPersonas.filter(op => op !== p && t.usageByPersona?.[op]).length;
@@ -655,17 +617,17 @@ export const compareToolEcosystemTool = createTool({
       }
     });
 
-    const totalToolUsages = currentOntology.tools.reduce((sum, t) => {
+    const totalToolUsages = allTools.reduce((sum, t) => {
       return sum + targetPersonas.filter(p => t.usageByPersona?.[p]).length;
     }, 0);
-    const maxPossibleSharing = currentOntology.tools.length * targetPersonas.length;
+    const maxPossibleSharing = allTools.length * targetPersonas.length;
     const fragmentationScore = maxPossibleSharing > 0
       ? 1 - (totalToolUsages / maxPossibleSharing)
       : 0;
 
     const consolidationOpportunities: string[] = [];
-    const categoryTools: Record<string, z.infer<typeof ToolSchema>[]> = {};
-    currentOntology.tools.forEach(t => {
+    const categoryTools: Record<string, ToolRow[]> = {};
+    allTools.forEach(t => {
       categoryTools[t.category] = categoryTools[t.category] || [];
       categoryTools[t.category].push(t);
     });
@@ -678,12 +640,160 @@ export const compareToolEcosystemTool = createTool({
     });
 
     return {
-      totalTools: currentOntology.tools.length,
+      totalTools: allTools.length,
       toolsByCategory,
       sharedTools,
       personaSpecificTools,
       fragmentationScore: Math.round(fragmentationScore * 100) / 100,
       consolidationOpportunities,
+    };
+  },
+});
+
+export const getEvidenceChainTool = createTool({
+  id: 'get-evidence-chain',
+  description: 'Get the evidence chain for an entity or tension — all transcript sources, quotes, and analysis contexts that support it.',
+  inputSchema: z.object({
+    targetType: z.enum(['entity', 'tension', 'insight', 'term']),
+    targetId: z.string().describe('The ID of the entity, tension, or term to look up evidence for'),
+  }),
+  outputSchema: z.object({
+    targetType: z.string(),
+    targetId: z.string(),
+    evidenceCount: z.number(),
+    sources: z.array(z.object({
+      transcriptId: z.string(),
+      quote: z.string().optional(),
+      context: z.string().optional(),
+      lensType: z.string().optional(),
+      createdAt: z.string().optional(),
+    })),
+  }),
+  execute: async ({ targetType, targetId }) => {
+    const sources = await getEvidenceForTarget(targetType, targetId);
+    return {
+      targetType,
+      targetId,
+      evidenceCount: sources.length,
+      sources: sources.map(s => ({
+        transcriptId: s.transcriptId,
+        quote: s.quote,
+        context: s.context,
+        lensType: s.lensType,
+        createdAt: s.createdAt,
+      })),
+    };
+  },
+});
+
+export const getTranscriptEvidenceTool = createTool({
+  id: 'get-transcript-evidence',
+  description: 'Get all entities and tensions that were derived from a specific transcript.',
+  inputSchema: z.object({
+    transcriptId: z.string().describe('The transcript ID to look up'),
+  }),
+  outputSchema: z.object({
+    transcriptId: z.string(),
+    totalReferences: z.number(),
+    entities: z.array(z.object({
+      targetId: z.string(),
+      quote: z.string().optional(),
+      context: z.string().optional(),
+    })),
+    tensions: z.array(z.object({
+      targetId: z.string(),
+      quote: z.string().optional(),
+      context: z.string().optional(),
+    })),
+  }),
+  execute: async ({ transcriptId }) => {
+    const all = await getEvidenceByTranscript(transcriptId);
+    const entities = all.filter(e => e.targetType === 'entity').map(e => ({
+      targetId: e.targetId,
+      quote: e.quote,
+      context: e.context,
+    }));
+    const tensions = all.filter(e => e.targetType === 'tension').map(e => ({
+      targetId: e.targetId,
+      quote: e.quote,
+      context: e.context,
+    }));
+    return {
+      transcriptId,
+      totalReferences: all.length,
+      entities,
+      tensions,
+    };
+  },
+});
+
+
+export const takeOntologySnapshotTool = createTool({
+  id: 'take-ontology-snapshot',
+  description: 'Take a snapshot of the current ontology state for versioning and undo purposes.',
+  inputSchema: z.object({
+    reason: z.string().optional().describe('Why this snapshot is being taken'),
+  }),
+  outputSchema: z.object({
+    snapshotId: z.number(),
+    reason: z.string().optional(),
+    message: z.string(),
+  }),
+  execute: async ({ reason }) => {
+    const id = await takeSnapshot(reason);
+    return {
+      snapshotId: id,
+      reason,
+      message: `Ontology snapshot #${id} saved.${reason ? ` Reason: ${reason}` : ''}`,
+    };
+  },
+});
+
+export const listOntologySnapshotsTool = createTool({
+  id: 'list-ontology-snapshots',
+  description: 'List all ontology snapshots ordered by most recent first.',
+  inputSchema: z.object({}),
+  outputSchema: z.object({
+    count: z.number(),
+    snapshots: z.array(z.object({
+      id: z.number(),
+      reason: z.string().optional(),
+      createdAt: z.string().optional(),
+    })),
+  }),
+  execute: async () => {
+    const snapshots = await listSnapshots();
+    return {
+      count: snapshots.length,
+      snapshots,
+    };
+  },
+});
+
+export const getOntologySnapshotTool = createTool({
+  id: 'get-ontology-snapshot',
+  description: 'Retrieve a specific ontology snapshot by ID to inspect what the ontology looked like at that point.',
+  inputSchema: z.object({
+    snapshotId: z.number().describe('The ID of the snapshot to retrieve'),
+  }),
+  outputSchema: z.object({
+    found: z.boolean(),
+    snapshotId: z.number(),
+    reason: z.string().optional(),
+    createdAt: z.string().optional(),
+    ontology: z.unknown().optional(),
+  }),
+  execute: async ({ snapshotId }) => {
+    const snap = await getSnapshot(snapshotId);
+    if (!snap) {
+      return { found: false, snapshotId };
+    }
+    return {
+      found: true,
+      snapshotId,
+      reason: snap.reason,
+      createdAt: snap.createdAt,
+      ontology: JSON.parse(snap.snapshot),
     };
   },
 });

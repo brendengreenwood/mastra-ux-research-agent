@@ -88,7 +88,10 @@
 | Data Type | Storage Location | Encryption |
 |-----------|------------------|------------|
 | Research ontology | `mastra.db` (local SQLite) | OS-level disk encryption |
-| Transcripts | In-memory during processing | N/A |
+| Transcripts | `mastra.db` (local SQLite) | OS-level disk encryption |
+| Evidence chains | `mastra.db` (local SQLite) | OS-level disk encryption |
+| Quote bank | `mastra.db` (local SQLite) | OS-level disk encryption |
+| Ontology snapshots | `mastra.db` (local SQLite) | OS-level disk encryption |
 | API credentials | `.env` file (gitignored) | N/A (local file permissions) |
 | Observability traces | `mastra.db` | OS-level disk encryption |
 

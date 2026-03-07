@@ -1,5 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import {
+  getTranscript, upsertTranscript, listTranscripts,
+  type TranscriptRow,
+} from '../storage/index.js';
 
 export const Persona = z.enum([
   'merchant',
@@ -52,9 +56,24 @@ const ProcessedTranscript = z.object({
   })).optional(),
 });
 
-type ProcessedTranscriptType = z.infer<typeof ProcessedTranscript>;
-
-const transcriptStore: Map<string, ProcessedTranscriptType> = new Map();
+function transcriptRowToProcessed(row: TranscriptRow): z.infer<typeof ProcessedTranscript> {
+  return {
+    metadata: {
+      id: row.id,
+      source: row.source,
+      persona: row.persona as PersonaType,
+      participantId: row.participantId,
+      context: row.context,
+      date: row.date,
+      duration: row.duration,
+    },
+    classification: row.classification as z.infer<typeof ResearchClassification>,
+    rawContent: row.rawContent,
+    segments: row.segments,
+    extractedTopics: row.extractedTopics,
+    keyQuotes: row.keyQuotes,
+  };
+}
 
 export const ingestTranscriptTool = createTool({
   id: 'ingest-transcript',
@@ -73,8 +92,14 @@ export const ingestTranscriptTool = createTool({
     const wordCount = content.split(/\s+/).length;
     const estimatedSegments = content.split(/\n\n+/).length;
 
-    const transcript: ProcessedTranscriptType = {
-      metadata,
+    const row: TranscriptRow = {
+      id: metadata.id,
+      source: metadata.source,
+      persona: metadata.persona,
+      participantId: metadata.participantId,
+      context: metadata.context,
+      date: metadata.date,
+      duration: metadata.duration,
       classification: {
         dataType: 'attitudinal',
         methodology: 'qualitative',
@@ -85,7 +110,7 @@ export const ingestTranscriptTool = createTool({
       extractedTopics: [],
     };
 
-    transcriptStore.set(metadata.id, transcript);
+    await upsertTranscript(row);
 
     return {
       id: metadata.id,
@@ -109,13 +134,12 @@ export const classifyTranscriptTool = createTool({
     classification: ResearchClassification,
     processingRecommendation: z.string(),
   }),
-  execute: async ({ transcriptId, classification, reasoning }) => {
-    const transcript = transcriptStore.get(transcriptId);
-    if (!transcript) {
-      throw new Error(`Transcript ${transcriptId} not found`);
-    }
+  execute: async ({ transcriptId, classification }) => {
+    const row = await getTranscript(transcriptId);
+    if (!row) throw new Error(`Transcript ${transcriptId} not found`);
 
-    transcript.classification = classification;
+    row.classification = classification;
+    await upsertTranscript(row);
 
     let recommendation = '';
     if (classification.dataType === 'attitudinal' && classification.methodology === 'qualitative') {
@@ -154,13 +178,12 @@ export const extractTopicsTool = createTool({
     quoteCount: z.number(),
   }),
   execute: async ({ transcriptId, topics, keyQuotes }) => {
-    const transcript = transcriptStore.get(transcriptId);
-    if (!transcript) {
-      throw new Error(`Transcript ${transcriptId} not found`);
-    }
+    const row = await getTranscript(transcriptId);
+    if (!row) throw new Error(`Transcript ${transcriptId} not found`);
 
-    transcript.extractedTopics = topics;
-    transcript.keyQuotes = keyQuotes;
+    row.extractedTopics = topics;
+    row.keyQuotes = keyQuotes;
+    await upsertTranscript(row);
 
     return {
       success: true,
@@ -178,11 +201,9 @@ export const getTranscriptTool = createTool({
   }),
   outputSchema: ProcessedTranscript,
   execute: async ({ transcriptId }) => {
-    const transcript = transcriptStore.get(transcriptId);
-    if (!transcript) {
-      throw new Error(`Transcript ${transcriptId} not found`);
-    }
-    return transcript;
+    const row = await getTranscript(transcriptId);
+    if (!row) throw new Error(`Transcript ${transcriptId} not found`);
+    return transcriptRowToProcessed(row);
   },
 });
 
@@ -204,18 +225,14 @@ export const listTranscriptsTool = createTool({
     })),
   }),
   execute: async ({ filterByPersona }) => {
-    let transcripts = Array.from(transcriptStore.values());
+    const rows = await listTranscripts(filterByPersona);
 
-    if (filterByPersona) {
-      transcripts = transcripts.filter(t => t.metadata.persona === filterByPersona);
-    }
-
-    const result = transcripts.map(t => ({
-      id: t.metadata.id,
-      source: t.metadata.source,
-      persona: t.metadata.persona,
-      personaLabel: PERSONA_LABELS[t.metadata.persona],
-      classification: t.classification,
+    const result = rows.map(t => ({
+      id: t.id,
+      source: t.source,
+      persona: t.persona as PersonaType,
+      personaLabel: PERSONA_LABELS[t.persona as PersonaType],
+      classification: t.classification as z.infer<typeof ResearchClassification>,
       topicCount: t.extractedTopics.length,
     }));
     return { count: result.length, transcripts: result };

@@ -16,6 +16,11 @@ import {
   addPocFeatureTool,
   getPocBenefitsByPersonaTool,
   compareToolEcosystemTool,
+  getEvidenceChainTool,
+  getTranscriptEvidenceTool,
+  takeOntologySnapshotTool,
+  listOntologySnapshotsTool,
+  getOntologySnapshotTool,
 } from '../tools/ontology-tool';
 
 import {
@@ -41,6 +46,14 @@ import {
   compareToExpectationsTool,
   synthesizeInsightsTool,
 } from '../tools/cognition-tools';
+
+import {
+  addQuoteTool,
+  batchAddQuotesTool,
+  queryQuotesTool,
+} from '../tools/quote-tools';
+
+import { generatePersonaProfileTool } from '../tools/persona-tools';
 
 export const researchAgent = new Agent({
   id: 'cognitive-research-agent',
@@ -211,6 +224,15 @@ This helps build the case: "For GOMs, Feature X solves pain points A, B, C and r
     assessCapacityTool,
     compareToExpectationsTool,
     synthesizeInsightsTool,
+    getEvidenceChainTool,
+    getTranscriptEvidenceTool,
+    takeOntologySnapshotTool,
+    listOntologySnapshotsTool,
+    getOntologySnapshotTool,
+    addQuoteTool,
+    batchAddQuotesTool,
+    queryQuotesTool,
+    generatePersonaProfileTool,
   },
 
   memory: new Memory(),

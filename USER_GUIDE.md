@@ -132,9 +132,14 @@ When you add a new lens, existing transcripts won't have been analyzed with it. 
 
 ## Data Persistence
 
-- **Ontology**: Stored in `mastra.db` (SQLite)
-- **Transcripts**: Currently in-memory (restart = lost)
-- **Traces**: Stored in `mastra.db` for debugging
+All research data is persisted to SQLite and survives restarts:
+
+- **Ontology** (entities, tensions, tools, terminology): `mastra.db`
+- **Transcripts**: `mastra.db` (full text, classification, topics, key quotes)
+- **Evidence chains**: Links every entity and tension back to source transcripts
+- **Quote bank**: All notable quotes, searchable by persona, topic, lens, or text
+- **Ontology snapshots**: Automatic versioning before each analysis run
+- **Traces**: `mastra.db` for debugging
 
 ## Environment Variables
 

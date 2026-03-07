@@ -120,6 +120,7 @@ export const applyOOUXLensTool = createTool({
   }),
   outputSchema: z.object({
     lens: z.literal('OOUX'),
+    transcriptId: z.string(),
     objectCount: z.number(),
     coreObjects: z.array(z.string()),
     relationshipCount: z.number(),
@@ -127,6 +128,7 @@ export const applyOOUXLensTool = createTool({
       type: z.enum(['add_entity', 'add_relationship', 'update_entity']),
       details: z.string(),
     })),
+    analysisNotes: z.string().optional(),
   }),
   execute: async ({ transcriptId, extractedObjects, analysisNotes }) => {
     const coreObjects = extractedObjects.filter(o => o.type === 'core').map(o => o.name);
@@ -139,10 +141,12 @@ export const applyOOUXLensTool = createTool({
 
     return {
       lens: 'OOUX' as const,
+      transcriptId,
       objectCount: extractedObjects.length,
       coreObjects,
       relationshipCount,
       suggestedOntologyUpdates,
+      analysisNotes,
     };
   },
 });
@@ -157,11 +161,13 @@ export const applyJTBDLensTool = createTool({
   }),
   outputSchema: z.object({
     lens: z.literal('JTBD'),
+    transcriptId: z.string(),
     jobCount: z.number(),
     primaryJobs: z.array(z.string()),
     topPainPoints: z.array(z.string()),
     unmetNeeds: z.array(z.string()),
     opportunityAreas: z.array(z.string()),
+    analysisNotes: z.string().optional(),
   }),
   execute: async ({ transcriptId, extractedJobs, analysisNotes }) => {
     const primaryJobs = extractedJobs.map(j => j.jobStatement);
@@ -178,11 +184,13 @@ export const applyJTBDLensTool = createTool({
 
     return {
       lens: 'JTBD' as const,
+      transcriptId,
       jobCount: extractedJobs.length,
       primaryJobs,
       topPainPoints: uniquePainPoints.slice(0, 5),
       unmetNeeds,
       opportunityAreas,
+      analysisNotes,
     };
   },
 });
@@ -197,6 +205,7 @@ export const applyTaskAnalysisLensTool = createTool({
   }),
   outputSchema: z.object({
     lens: z.literal('TaskAnalysis'),
+    transcriptId: z.string(),
     flowCount: z.number(),
     totalSteps: z.number(),
     decisionPoints: z.array(z.string()),
@@ -205,6 +214,7 @@ export const applyTaskAnalysisLensTool = createTool({
       issue: z.string(),
     })),
     automationOpportunities: z.array(z.string()),
+    analysisNotes: z.string().optional(),
   }),
   execute: async ({ transcriptId, extractedFlows, analysisNotes }) => {
     const totalSteps = extractedFlows.reduce((sum, f) => sum + f.steps.length, 0);
@@ -229,11 +239,13 @@ export const applyTaskAnalysisLensTool = createTool({
 
     return {
       lens: 'TaskAnalysis' as const,
+      transcriptId,
       flowCount: extractedFlows.length,
       totalSteps,
       decisionPoints,
       bottlenecks,
       automationOpportunities,
+      analysisNotes,
     };
   },
 });
@@ -248,6 +260,7 @@ export const applyMentalModelLensTool = createTool({
   }),
   outputSchema: z.object({
     lens: z.literal('MentalModel'),
+    transcriptId: z.string(),
     conceptCount: z.number(),
     accurateUnderstandings: z.array(z.string()),
     partialUnderstandings: z.array(z.string()),
@@ -257,6 +270,7 @@ export const applyMentalModelLensTool = createTool({
       implications: z.array(z.string()),
     })),
     educationOpportunities: z.array(z.string()),
+    analysisNotes: z.string().optional(),
   }),
   execute: async ({ transcriptId, extractedConcepts, analysisNotes }) => {
     const accurateUnderstandings = extractedConcepts
@@ -281,11 +295,13 @@ export const applyMentalModelLensTool = createTool({
 
     return {
       lens: 'MentalModel' as const,
+      transcriptId,
       conceptCount: extractedConcepts.length,
       accurateUnderstandings,
       partialUnderstandings,
       misconceptions,
       educationOpportunities,
+      analysisNotes,
     };
   },
 });
@@ -308,6 +324,7 @@ export const applyActivityLensTool = createTool({
   }),
   outputSchema: z.object({
     lens: z.literal('Activity'),
+    transcriptId: z.string(),
     activityCount: z.number(),
     taskCount: z.number(),
     operationCount: z.number(),
@@ -345,6 +362,7 @@ export const applyActivityLensTool = createTool({
       consolidationOpportunities: z.array(z.string()),
     }),
     designImplications: z.array(z.string()),
+    analysisNotes: z.string().optional(),
   }),
   execute: async ({ transcriptId, persona, extractedActivities, analysisNotes }) => {
     const taskCount = extractedActivities.reduce((sum, a) => sum + a.tasks.length, 0);
@@ -489,6 +507,7 @@ export const applyActivityLensTool = createTool({
 
     return {
       lens: 'Activity' as const,
+      transcriptId,
       activityCount: extractedActivities.length,
       taskCount,
       operationCount,
@@ -498,6 +517,7 @@ export const applyActivityLensTool = createTool({
       automationCandidates,
       toolEcosystem,
       designImplications,
+      analysisNotes,
     };
   },
 });
@@ -535,6 +555,10 @@ export const getLensRecommendationTool = createTool({
       primaryLens = 'OOUX';
       secondaryLens = 'MentalModel';
       reasoning = 'Discovery phase: Extract entities and understand user mental models first.';
+    } else if (phase === 'definition') {
+      primaryLens = 'Activity';
+      secondaryLens = 'JTBD';
+      reasoning = 'Definition phase: Map full activity hierarchy and underlying motivations.';
     } else if (dataType === 'behavioral') {
       primaryLens = 'Activity';
       secondaryLens = 'TaskAnalysis';
@@ -543,10 +567,6 @@ export const getLensRecommendationTool = createTool({
       primaryLens = 'JTBD';
       secondaryLens = 'MentalModel';
       reasoning = 'Attitudinal data: Extract jobs and validate mental models.';
-    } else if (phase === 'definition') {
-      primaryLens = 'Activity';
-      secondaryLens = 'JTBD';
-      reasoning = 'Definition phase: Map full activity hierarchy and underlying motivations.';
     } else {
       primaryLens = 'OOUX';
       reasoning = 'Default to OOUX for entity extraction.';

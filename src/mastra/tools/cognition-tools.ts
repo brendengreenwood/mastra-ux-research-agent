@@ -271,6 +271,7 @@ export const synthesizeInsightsTool = createTool({
     followUpResearch: z.array(z.string()),
   }),
   execute: async ({ transcriptId, comparison, lensResults }) => {
+    // Build insights from high-significance surprises
     const insights = comparison.surprises
       .filter(s => s.significance === 'high')
       .map(s => ({
@@ -279,6 +280,18 @@ export const synthesizeInsightsTool = createTool({
         evidence: [transcriptId],
         actionable: true,
       }));
+
+    // Add insights from lens findings
+    for (const lr of lensResults) {
+      for (const finding of lr.keyFindings) {
+        insights.push({
+          insight: `[${lr.lens}] ${finding}`,
+          confidence: 0.6,
+          evidence: [transcriptId],
+          actionable: false,
+        });
+      }
+    }
 
     const ontologyUpdates: Array<{ type: 'add_entity' | 'add_relationship' | 'add_tension' | 'resolve_question' | 'add_terminology'; details: string; priority: 'high' | 'medium' | 'low' }> = [];
 
@@ -295,6 +308,17 @@ export const synthesizeInsightsTool = createTool({
           type: 'add_tension',
           details: surprise.description,
           priority: 'high',
+        });
+      }
+    }
+
+    // Generate ontology updates from lens findings
+    for (const lr of lensResults) {
+      if (lr.keyFindings.length > 0) {
+        ontologyUpdates.push({
+          type: 'add_terminology',
+          details: `[${lr.lens}] Key findings: ${lr.keyFindings.join('; ')}`,
+          priority: 'low',
         });
       }
     }

@@ -1,6 +1,10 @@
 import { createStep, createWorkflow } from '@mastra/core/workflows';
 import { z } from 'zod';
 import { Persona, PERSONA_LABELS } from '../tools/transcript-tool';
+import {
+  getEntity, upsertEntity, updateEntityPerspective, upsertTension, addEvidence, takeSnapshot,
+  type EntityType, type TensionType, type TensionStatus, type RolePerspective, type PersonaType,
+} from '../storage/index.js';
 
 const TranscriptInput = z.object({
   content: z.string().describe('Raw transcript or research notes'),
@@ -217,6 +221,43 @@ const synthesizeStep = createStep({
       });
     }
 
+    // Detect tensions from topic combinations
+    if (inputData.topics.includes('risk') && inputData.topics.includes('pricing')) {
+      proposedTensions.push({
+        id: `tension-risk-pricing-${inputData.persona}-${Date.now()}`,
+        description: `${inputData.personaLabel} faces tension between risk management and competitive pricing`,
+        tensionType: 'intra-role',
+        roles: [inputData.persona],
+        entities: ['risk', 'pricing'],
+        implications: 'May lead to overly conservative or aggressive pricing depending on risk tolerance',
+        evidence: [inputData.transcriptId],
+      });
+    }
+
+    if (inputData.topics.includes('relationship') && inputData.topics.includes('market')) {
+      proposedTensions.push({
+        id: `tension-relationship-market-${inputData.persona}-${Date.now()}`,
+        description: `${inputData.personaLabel} navigates tension between customer relationship maintenance and market-driven decisions`,
+        tensionType: 'system',
+        roles: [inputData.persona],
+        entities: ['relationship', 'market'],
+        implications: 'Customer loyalty vs. optimal market positioning creates recurring decision pressure',
+        evidence: [inputData.transcriptId],
+      });
+    }
+
+    if (inputData.topics.includes('quality') && inputData.topics.includes('timing')) {
+      proposedTensions.push({
+        id: `tension-quality-timing-${inputData.persona}-${Date.now()}`,
+        description: `${inputData.personaLabel} experiences tension between quality assessment thoroughness and time-sensitive decisions`,
+        tensionType: 'intra-role',
+        roles: [inputData.persona],
+        entities: ['quality', 'timing'],
+        implications: 'Time pressure may compromise quality evaluation, especially in fast-moving markets',
+        evidence: [inputData.transcriptId],
+      });
+    }
+
     const followUpQuestions = [
       `How does ${inputData.personaLabel}'s view of contracts compare to other roles?`,
       `What specific terminology does ${inputData.personaLabel} use that differs from system terminology?`,
@@ -301,6 +342,9 @@ const persistStep = createStep({
       };
     }
 
+    // Snapshot ontology before making changes
+    await takeSnapshot(`Before persist: ${synthesis.personaLabel} analysis of transcript ${synthesis.transcriptId}`);
+
     const approvedEntities = synthesis.proposedEntityUpdates.filter(
       e => decision.approvedEntityUpdates.includes(e.entityId)
     );
@@ -308,16 +352,99 @@ const persistStep = createStep({
       t => decision.approvedTensions.includes(t.id)
     );
 
+    // Actually persist approved entity updates
+    let persistedEntityCount = 0;
+    for (const update of approvedEntities) {
+      if (update.updateType === 'add_entity') {
+        await upsertEntity({
+          id: update.entityId,
+          name: update.entityName,
+          type: (update.details.type as EntityType) || 'concept',
+        });
+        await addEvidence({
+          targetType: 'entity',
+          targetId: update.entityId,
+          transcriptId: synthesis.transcriptId,
+          quote: update.evidence?.[0],
+          context: `Discovered via ${synthesis.personaLabel} analysis`,
+        });
+        persistedEntityCount++;
+      } else if (update.updateType === 'add_perspective' || update.updateType === 'update_perspective') {
+        const existing = await getEntity(update.entityId);
+        if (existing) {
+          const perspective: RolePerspective = {
+            primaryConcern: (update.details.primaryConcern as string) || `Discovered from ${synthesis.personaLabel}`,
+            evidence: update.evidence,
+          };
+          await updateEntityPerspective(update.entityId, update.persona as PersonaType, perspective);
+          persistedEntityCount++;
+        } else {
+          // Entity doesn't exist yet — create it, then add perspective
+          await upsertEntity({
+            id: update.entityId,
+            name: update.entityName,
+            type: 'concept',
+          });
+          const perspective: RolePerspective = {
+            primaryConcern: (update.details.primaryConcern as string) || `Discovered from ${synthesis.personaLabel}`,
+            evidence: update.evidence,
+          };
+          await updateEntityPerspective(update.entityId, update.persona as PersonaType, perspective);
+          persistedEntityCount++;
+        }
+      } else if (update.updateType === 'add_relationship') {
+        const existing = await getEntity(update.entityId);
+        if (existing) {
+          const relationships = existing.relationships || [];
+          const targetId = update.details.targetId as string;
+          const relation = update.details.relation as string;
+          if (targetId && relation) {
+            relationships.push({
+              targetId,
+              relation,
+              roleSpecific: update.persona as PersonaType,
+            });
+            existing.relationships = relationships;
+            await upsertEntity(existing);
+            persistedEntityCount++;
+          }
+        }
+      }
+    }
+
+    // Actually persist approved tensions
+    let persistedTensionCount = 0;
+    for (const tension of approvedTensions) {
+      await upsertTension({
+        id: tension.id,
+        description: tension.description,
+        tensionType: tension.tensionType as TensionType,
+        roles: tension.roles,
+        entities: tension.entities,
+        implications: tension.implications,
+        status: 'open' as TensionStatus,
+        evidence: tension.evidence,
+      });
+      await addEvidence({
+        targetType: 'tension',
+        targetId: tension.id,
+        transcriptId: synthesis.transcriptId,
+        quote: tension.evidence?.[0],
+        context: `Tension discovered in ${synthesis.personaLabel} analysis`,
+      });
+      persistedTensionCount++;
+    }
+
     const skipped =
       (synthesis.proposedEntityUpdates.length - approvedEntities.length) +
       (synthesis.proposedTensions.length - approvedTensions.length);
 
     return {
       success: true,
-      persistedEntities: approvedEntities.length,
-      persistedTensions: approvedTensions.length,
+      persistedEntities: persistedEntityCount,
+      persistedTensions: persistedTensionCount,
       skippedUpdates: skipped,
-      summary: `Persisted ${approvedEntities.length} entity updates and ${approvedTensions.length} tensions from ${synthesis.personaLabel} analysis.${decision.notes ? ` Notes: ${decision.notes}` : ''}`,
+      summary: `Persisted ${persistedEntityCount} entity updates and ${persistedTensionCount} tensions from ${synthesis.personaLabel} analysis.${decision.notes ? ` Notes: ${decision.notes}` : ''}`,
     };
   },
 });
